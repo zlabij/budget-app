@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from "recharts";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, Cell, CartesianGrid } from "recharts";
 
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -72,6 +72,8 @@ export default function App(){
   const [fixed,setFixed]=useState([]);
   const [accounts,setAccounts]=useState([]);
   const [templates,setTemplates]=useState([]);
+  const [ious,setIous]=useState([]);
+  const [lastCat,setLastCat]=useState(null);
   const [view,setView]=useState("overview");
   const [modal,setModal]=useState(null);
   const [toast,setToast]=useState(null);
@@ -88,6 +90,10 @@ export default function App(){
   const [tmplName,setTmplName]=useState("");
   const [editBudgetVal,setEditBudgetVal]=useState("");
   const [qaCat,setQaCat]=useState(null); const [qaAmt,setQaAmt]=useState(""); const [qaNote,setQaNote]=useState("");
+  // IOU form state
+  const [iouName,setIouName]=useState(""); const [iouAmt,setIouAmt]=useState(""); const [iouNote,setIouNote]=useState(""); const [iouCat,setIouCat]=useState("");
+  // Log actual fixed expense
+  const [logActualIdx,setLogActualIdx]=useState(null); const [logActualAmt,setLogActualAmt]=useState("");
 
   useEffect(()=>{
     let d=load(yr,mo);
@@ -108,26 +114,42 @@ export default function App(){
       d={categories:cats,income:prevInc,savings:prevSavs,fixedExpenses:prevFixed,balanceCarryover:prevBalCarry};
       save(yr,mo,d);
     }
-    setCategories(d.categories||[]); setIncome(d.income||0); setSavings(d.savings||[]); setFixed(d.fixedExpenses||[]); setBalCarry(d.balanceCarryover||0);
+    const globalFixed=loadX("global_fixed")||[];
+    const monthFixed=(d.fixedExpenses&&d.fixedExpenses.length>0)?d.fixedExpenses:globalFixed;
+    setCategories(d.categories||[]); setIncome(d.income||0); setSavings(d.savings||[]); setFixed(monthFixed); setBalCarry(d.balanceCarryover||0);
     setIncomeInput((d.income||0).toString());
   },[yr,mo]);
 
-  useEffect(()=>{setAccounts(loadX("nw_accounts")||[]);setTemplates(loadX("budget_templates")||[]);},[]);
+  useEffect(()=>{setAccounts(loadX("nw_accounts")||[]);setTemplates(loadX("budget_templates")||[]);setIous(loadX("ious")||[]);setLastCat(loadX("last_cat")||null);},[]);
 
   function persist(cats,inc,savs,fx){
     const c=cats??categories,i=inc??income,s=savs??savings,f=fx??fixed;
     setCategories(c);setIncome(i);setSavings(s);setFixed(f);
     save(yr,mo,{categories:c,income:i,savings:s,fixedExpenses:f,balanceCarryover:balCarry});
+    if(fx!==null)saveX("global_fixed",f);
   }
   function persistAccounts(a){setAccounts(a);saveX("nw_accounts",a);}
   function persistTemplates(t){setTemplates(t);saveX("budget_templates",t);}
+  function persistIous(i){setIous(i);saveX("ious",i);}
   function showToast(msg,type="ok"){setToast({msg,type});setTimeout(()=>setToast(null),2600);}
 
-  const totalFixed=fixed.reduce((s,f)=>s+f.amount,0);
+  function logSpend(catName,amt,note){
+    const updated=categories.map(c=>c.name!==catName?c:{...c,spent:+(c.spent+amt).toFixed(2),transactions:[{amount:amt,note:note||null,date:new Date().toLocaleDateString(),dow:new Date().getDay()},...c.transactions]});
+    persist(updated,null,null,null);
+    setLastCat(catName);saveX("last_cat",catName);
+    showToast(`$${fmt(amt)} logged ✓`);
+  }
+
+  // IOU helpers
+  const pendingIous=ious.filter(x=>!x.paid);
+  const totalOwed=pendingIous.reduce((s,x)=>s+x.amount,0);
+
+  const totalFixed=fixed.reduce((s,f)=>s+(f.actualAmount??f.amount),0);
   const totalBudgeted=categories.reduce((s,c)=>s+c.budget+c.carryover,0);
   const totalSpent=categories.reduce((s,c)=>s+c.spent,0);
   const totalSaved=savings.reduce((s,sv)=>s+sv.deposited,0);
-  const balance=income+balCarry-totalFixed-totalSpent-totalSaved;
+  const paidBackIous=ious.filter(x=>x.paid).reduce((s,x)=>s+x.amount,0);
+  const balance=income+balCarry-totalFixed-totalSpent-totalSaved+paidBackIous;
   const unallocated=income+balCarry-totalFixed-totalBudgeted-totalSaved;
   const netWorth=accounts.reduce((s,a)=>s+a.balance,0)+savings.reduce((s,sv)=>s+(sv.totalDeposited||0)+sv.deposited,0);
 
@@ -179,7 +201,7 @@ export default function App(){
   }
 
   const nudgeColors={warn:"#f59e0b",over:"#ef4444",good:"#10b981",great:"#a78bfa",nudge:"#60a5fa"};
-  const tabs=[{id:"overview",icon:"◈",label:"Overview"},{id:"budgets",icon:"◉",label:"Budgets"},{id:"savings",icon:"◎",label:"Savings"},{id:"fixed",icon:"📌",label:"Fixed"},{id:"insights",icon:"📈",label:"Insights"},{id:"manage",icon:"⊞",label:"Manage"}];
+  const tabs=[{id:"overview",icon:"◈",label:"Overview"},{id:"budgets",icon:"◉",label:"Budgets"},{id:"savings",icon:"◎",label:"Savings"},{id:"fixed",icon:"📌",label:"Fixed"},{id:"owed",icon:"🤝",label:"Owed"},{id:"insights",icon:"📈",label:"Insights"},{id:"manage",icon:"⊞",label:"Manage"}];
 
   const allCatColors={};categories.forEach(c=>{allCatColors[c.name]=c.color;});
 
@@ -188,6 +210,8 @@ export default function App(){
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+        html,body{overscroll-behavior:none;overflow:hidden;position:fixed;width:100%;height:100%;}
+        #root{width:100%;height:100%;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:none;}
         *{box-sizing:border-box;margin:0;padding:0}input,button{font-family:'DM Sans',sans-serif}button{cursor:pointer}
         .prog{transition:width 0.55s cubic-bezier(.4,0,.2,1)}
         .card{transition:border-color 0.15s}.card:hover{border-color:#252840!important}
@@ -445,33 +469,50 @@ export default function App(){
                 {fixed.map((fx,i)=>{
                   const days=daysUntilDue(fx.dueDay);
                   const urgent=days!==null&&days<=3;
+                  const actual=fx.actualAmount??fx.amount;
+                  const hasActual=fx.actualAmount!==undefined&&fx.actualAmount!==fx.amount;
                   return(
-                    <div key={fx.name+i} className="card" style={{background:"#0c0e18",border:`1px solid ${urgent?"#ef444440":"#141726"}`,borderRadius:12,padding:"12px 14px",display:"flex",alignItems:"center",gap:10}}>
-                      <div style={{width:36,height:36,borderRadius:9,background:"#ef444418",border:"1px solid #ef444428",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{fx.emoji}</div>
-                      <div style={{flex:1}}>
-                        <div style={{fontWeight:600,fontSize:14,display:"flex",alignItems:"center",gap:6}}>
-                          {fx.name}
-                          {urgent&&<span style={{fontSize:9,background:"#ef444420",color:"#f87171",border:"1px solid #ef444440",borderRadius:100,padding:"1px 6px",fontWeight:700}}>DUE {days===0?"TODAY":days===1?"TOMORROW":`IN ${days}d`}</span>}
-                        </div>
-                        {editFixIdx===i?(
-                          <div style={{display:"flex",gap:6,marginTop:4}}>
-                            <input autoFocus value={editFixAmt} onChange={e=>setEditFixAmt(e.target.value)} type="number" style={{width:80,background:"#141726",border:"1px solid #252840",borderRadius:7,padding:"4px 8px",color:"#e2e4f0",fontSize:13,outline:"none"}}/>
-                            <input value={editFixDue} onChange={e=>setEditFixDue(e.target.value)} type="number" min="1" max="31" placeholder="Due day" style={{width:70,background:"#141726",border:"1px solid #252840",borderRadius:7,padding:"4px 8px",color:"#e2e4f0",fontSize:13,outline:"none"}}/>
-                            <button onClick={()=>{const amt=parseFloat(editFixAmt);if(isNaN(amt))return;const u=[...fixed];u[i]={...u[i],amount:+amt.toFixed(2),dueDay:editFixDue?+editFixDue:null};persist(null,null,null,u);setEditFixIdx(null);showToast("Updated ✓");}} style={{padding:"4px 10px",background:"#10b981",color:"#fff",border:"none",borderRadius:7,fontSize:12,fontWeight:600}}>Save</button>
-                            <button onClick={()=>setEditFixIdx(null)} style={{padding:"4px 8px",background:"#141726",color:"#6b7299",border:"none",borderRadius:7,fontSize:12}}>✕</button>
+                    <div key={fx.name+i} className="card" style={{background:"#0c0e18",border:`1px solid ${urgent?"#ef444440":"#141726"}`,borderRadius:12,padding:"12px 14px"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:10}}>
+                        <div style={{width:36,height:36,borderRadius:9,background:"#ef444418",border:"1px solid #ef444428",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{fx.emoji}</div>
+                        <div style={{flex:1}}>
+                          <div style={{fontWeight:600,fontSize:14,display:"flex",alignItems:"center",gap:6}}>
+                            {fx.name}
+                            {urgent&&<span style={{fontSize:9,background:"#ef444420",color:"#f87171",border:"1px solid #ef444440",borderRadius:100,padding:"1px 6px",fontWeight:700}}>DUE {days===0?"TODAY":days===1?"TOMORROW":`IN ${days}d`}</span>}
                           </div>
-                        ):(
-                          <div style={{display:"flex",alignItems:"center",gap:8}}>
-                            <div style={{fontSize:12,color:"#f87171",fontFamily:"'Space Mono',monospace"}}>-${fmt(fx.amount)}/mo</div>
-                            {fx.dueDay&&<div style={{fontSize:10,color:"#4b5280"}}>Due {fx.dueDay}{["st","nd","rd"][((fx.dueDay+90)%100-10)%10-1]||"th"}</div>}
+                          {editFixIdx===i?(
+                            <div style={{display:"flex",gap:6,marginTop:4}}>
+                              <input autoFocus value={editFixAmt} onChange={e=>setEditFixAmt(e.target.value)} type="number" style={{width:80,background:"#141726",border:"1px solid #252840",borderRadius:7,padding:"4px 8px",color:"#e2e4f0",fontSize:13,outline:"none"}}/>
+                              <input value={editFixDue} onChange={e=>setEditFixDue(e.target.value)} type="number" min="1" max="31" placeholder="Due day" style={{width:70,background:"#141726",border:"1px solid #252840",borderRadius:7,padding:"4px 8px",color:"#e2e4f0",fontSize:13,outline:"none"}}/>
+                              <button onClick={()=>{const amt=parseFloat(editFixAmt);if(isNaN(amt))return;const u=[...fixed];u[i]={...u[i],amount:+amt.toFixed(2),dueDay:editFixDue?+editFixDue:null,actualAmount:undefined};persist(null,null,null,u);setEditFixIdx(null);showToast("Updated ✓");}} style={{padding:"4px 10px",background:"#10b981",color:"#fff",border:"none",borderRadius:7,fontSize:12,fontWeight:600}}>Save</button>
+                              <button onClick={()=>setEditFixIdx(null)} style={{padding:"4px 8px",background:"#141726",color:"#6b7299",border:"none",borderRadius:7,fontSize:12}}>✕</button>
+                            </div>
+                          ):(
+                            <div style={{display:"flex",alignItems:"center",gap:8,marginTop:2}}>
+                              <div style={{fontSize:12,color:hasActual?"#f97316":"#f87171",fontFamily:"'Space Mono',monospace"}}>-${fmt(actual)}/mo{hasActual&&<span style={{fontSize:10,color:"#4b5280",marginLeft:4}}>(set: ${fmt(fx.amount)})</span>}</div>
+                              {fx.dueDay&&<div style={{fontSize:10,color:"#4b5280"}}>Due {fx.dueDay}{["st","nd","rd"][((fx.dueDay+90)%100-10)%10-1]||"th"}</div>}
+                            </div>
+                          )}
+                        </div>
+                        {editFixIdx!==i&&(
+                          <div style={{display:"flex",gap:5}}>
+                            <button onClick={()=>{setEditFixIdx(i);setEditFixAmt(fx.amount.toString());setEditFixDue(fx.dueDay?.toString()||"");}} style={{padding:"5px 8px",background:"#141726",color:"#9ca3c0",border:"none",borderRadius:7,fontSize:11}}>Edit</button>
+                            <button onClick={()=>setModal({type:"confirmDelete",idx:i,name:fx.name})} style={{padding:"5px 8px",background:"#141726",color:"#ef4444",border:"none",borderRadius:7,fontSize:11}}>✕</button>
                           </div>
                         )}
                       </div>
+                      {/* Log Actual */}
                       {editFixIdx!==i&&(
-                        <>
-                          <button onClick={()=>{setEditFixIdx(i);setEditFixAmt(fx.amount.toString());setEditFixDue(fx.dueDay?.toString()||"");}} style={{padding:"5px 10px",background:"#141726",color:"#9ca3c0",border:"none",borderRadius:7,fontSize:12}}>Edit</button>
-                          <button onClick={()=>persist(null,null,null,fixed.filter((_,j)=>j!==i))} style={{padding:"5px 10px",background:"#141726",color:"#ef4444",border:"none",borderRadius:7,fontSize:12}}>✕</button>
-                        </>
+                        logActualIdx===i?(
+                          <div style={{display:"flex",gap:6,marginTop:10,alignItems:"center"}}>
+                            <span style={{fontSize:12,color:"#6b7299",flexShrink:0}}>Actual $</span>
+                            <input autoFocus value={logActualAmt} onChange={e=>setLogActualAmt(e.target.value)} type="number" placeholder={fx.amount.toString()} style={{flex:1,background:"#141726",border:"1px solid #7c3aed55",borderRadius:7,padding:"6px 10px",color:"#e2e4f0",fontSize:14,outline:"none"}}/>
+                            <button onClick={()=>{const amt=parseFloat(logActualAmt);if(isNaN(amt)||amt<=0)return;const u=[...fixed];u[i]={...u[i],actualAmount:+amt.toFixed(2)};persist(null,null,null,u);setLogActualIdx(null);setLogActualAmt("");showToast("Actual logged ✓");}} style={{padding:"6px 12px",background:"#7c3aed",color:"#fff",border:"none",borderRadius:7,fontSize:12,fontWeight:600}}>Save</button>
+                            <button onClick={()=>{setLogActualIdx(null);setLogActualAmt("");}} style={{padding:"6px 8px",background:"#141726",color:"#6b7299",border:"none",borderRadius:7,fontSize:12}}>✕</button>
+                          </div>
+                        ):(
+                          <button onClick={()=>{setLogActualIdx(i);setLogActualAmt(fx.actualAmount?.toString()||"");}} style={{marginTop:8,width:"100%",padding:"6px 0",background:"#ef444412",color:"#f87171",border:"1px solid #ef444425",borderRadius:7,fontSize:12,fontWeight:600}}>Log Actual Amount This Month</button>
+                        )
                       )}
                     </div>
                   );
@@ -481,6 +522,113 @@ export default function App(){
                   <div style={{fontFamily:"'Space Mono',monospace",fontSize:16,fontWeight:700,color:"#f87171"}}>-${fmt(totalFixed)}</div>
                 </div>
               </>
+            )}
+          </div>
+        )}
+
+        {/* ── OWED TO ME ── */}
+        {view==="owed"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {/* Summary */}
+            {pendingIous.length>0&&(
+              <div style={{background:"linear-gradient(135deg,#065f4620,#064e3b10)",border:"1px solid #10b98130",borderRadius:14,padding:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontSize:9,color:"#4b5280",letterSpacing:1,textTransform:"uppercase",marginBottom:4}}>Total Owed to You</div>
+                  <div style={{fontFamily:"'Space Mono',monospace",fontSize:26,fontWeight:700,color:"#34d399"}}>${fmt(totalOwed)}</div>
+                </div>
+                <div style={{fontSize:9,color:"#4b5280",textAlign:"right"}}>
+                  <div style={{fontSize:20,marginBottom:4}}>🤝</div>
+                  {pendingIous.length} pending
+                </div>
+              </div>
+            )}
+
+            {/* Add IOU form */}
+            <div className="card" style={{background:"#0c0e18",border:"1px solid #141726",borderRadius:14,padding:16}}>
+              <div style={{fontSize:9,color:"#4b5280",letterSpacing:1,textTransform:"uppercase",marginBottom:12}}>New IOU</div>
+              <div style={{display:"flex",gap:8,marginBottom:8}}>
+                <input value={iouName} onChange={e=>setIouName(e.target.value)} placeholder="Who owes you?" style={{flex:1,background:"#141726",border:"1px solid #252840",borderRadius:9,padding:"9px 12px",color:"#e2e4f0",fontSize:14,outline:"none"}}/>
+                <input value={iouAmt} onChange={e=>setIouAmt(e.target.value)} type="number" placeholder="Amount" style={{width:100,background:"#141726",border:"1px solid #252840",borderRadius:9,padding:"9px 12px",color:"#e2e4f0",fontSize:14,outline:"none"}}/>
+              </div>
+              <input value={iouNote} onChange={e=>setIouNote(e.target.value)} placeholder="What for? (e.g. dinner at The Keg)" style={{width:"100%",background:"#141726",border:"1px solid #252840",borderRadius:9,padding:"9px 12px",color:"#e2e4f0",fontSize:14,marginBottom:8,outline:"none"}}/>
+              {categories.length>0&&(
+                <div style={{marginBottom:8}}>
+                  <div style={{fontSize:10,color:"#4b5280",marginBottom:6}}>Link to budget category (optional)</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                    <button onClick={()=>setIouCat("")} style={{padding:"5px 10px",background:iouCat===""?"#252840":"#141726",color:iouCat===""?"#a78bfa":"#6b7299",border:`1px solid ${iouCat===""?"#7c3aed55":"#252840"}`,borderRadius:20,fontSize:12}}>None</button>
+                    {categories.map(cat=>(
+                      <button key={cat.name} onClick={()=>setIouCat(cat.name)} style={{padding:"5px 10px",background:iouCat===cat.name?cat.color+"33":"#141726",color:iouCat===cat.name?cat.color:"#6b7299",border:`1px solid ${iouCat===cat.name?cat.color+"55":"#252840"}`,borderRadius:20,fontSize:12,display:"flex",alignItems:"center",gap:4}}>
+                        <span>{cat.emoji}</span>{cat.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <button onClick={()=>{
+                const amt=parseFloat(iouAmt);
+                if(!iouName.trim()||!amt||amt<=0)return;
+                const newIou={id:Date.now(),name:iouName.trim(),amount:+amt.toFixed(2),note:iouNote.trim(),category:iouCat,date:new Date().toLocaleDateString(),paid:false,paidDate:null};
+                persistIous([newIou,...ious]);
+                setIouName("");setIouAmt("");setIouNote("");setIouCat("");
+                showToast("IOU added ✓");
+              }} style={{width:"100%",padding:"10px 0",background:"#059669",color:"#fff",border:"none",borderRadius:9,fontWeight:700,fontSize:14}}>Add IOU</button>
+            </div>
+
+            {/* Pending IOUs */}
+            {pendingIous.length>0&&(
+              <div>
+                <div style={{fontSize:9,color:"#4b5280",letterSpacing:1,textTransform:"uppercase",marginBottom:8,paddingLeft:2}}>Pending</div>
+                {ious.map((iou,i)=>!iou.paid&&(
+                  <div key={iou.id} className="card" style={{background:"#0c0e18",border:"1px solid #141726",borderRadius:12,padding:"12px 14px",marginBottom:8}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+                      <div style={{flex:1}}>
+                        <div style={{fontWeight:700,fontSize:15,color:"#e2e4f0"}}>{iou.name}</div>
+                        {iou.note&&<div style={{fontSize:12,color:"#6b7299",marginTop:2}}>{iou.note}</div>}
+                        <div style={{display:"flex",gap:8,marginTop:4,alignItems:"center"}}>
+                          <div style={{fontSize:10,color:"#4b5280"}}>📅 {iou.date}</div>
+                          {iou.category&&<div style={{fontSize:10,color:"#6b7299",background:"#252840",borderRadius:100,padding:"1px 7px"}}>{iou.category}</div>}
+                        </div>
+                      </div>
+                      <div style={{fontFamily:"'Space Mono',monospace",fontSize:16,fontWeight:700,color:"#34d399",marginLeft:12}}>${fmt(iou.amount)}</div>
+                    </div>
+                    <button onClick={()=>{
+                      const updated=ious.map((x,j)=>j!==i?x:{...x,paid:true,paidDate:new Date().toLocaleDateString()});
+                      persistIous(updated);
+                      showToast(`${iou.name} paid you back ✓`);
+                    }} style={{width:"100%",padding:"8px 0",background:"#10b98118",color:"#34d399",border:"1px solid #10b98130",borderRadius:8,fontWeight:700,fontSize:13}}>✓ Mark as Paid</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Paid IOUs history */}
+            {ious.some(x=>x.paid)&&(
+              <div>
+                <div style={{fontSize:9,color:"#4b5280",letterSpacing:1,textTransform:"uppercase",marginBottom:8,paddingLeft:2}}>Paid Back</div>
+                {ious.map((iou,i)=>iou.paid&&(
+                  <div key={iou.id} style={{background:"#0a0c14",border:"1px solid #1e2140",borderRadius:12,padding:"10px 14px",marginBottom:6,opacity:0.7}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <div>
+                        <div style={{fontWeight:600,fontSize:14,color:"#6b7299"}}>{iou.name}</div>
+                        {iou.note&&<div style={{fontSize:11,color:"#3d4268"}}>{iou.note}</div>}
+                        <div style={{fontSize:10,color:"#3d4268",marginTop:2}}>Paid {iou.paidDate||"back"}</div>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <div style={{fontFamily:"'Space Mono',monospace",fontSize:13,color:"#34d39988"}}>${fmt(iou.amount)}</div>
+                        <button onClick={()=>persistIous(ious.filter((_,j)=>j!==i))} style={{padding:"3px 7px",background:"none",color:"#3d4268",border:"none",fontSize:12}}>✕</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {ious.length===0&&(
+              <div style={{textAlign:"center",padding:"50px 20px",color:"#3d4268"}}>
+                <div style={{fontSize:40,marginBottom:12}}>🤝</div>
+                <div style={{fontSize:14,marginBottom:6}}>No IOUs yet</div>
+                <div style={{fontSize:12}}>When you cover someone's tab, add it here and track when they pay you back</div>
+              </div>
             )}
           </div>
         )}
@@ -666,7 +814,7 @@ export default function App(){
 
       {/* ── FLOATING QUICK-ADD ── */}
       {view!=="manage"&&categories.length>0&&(
-        <button className="fab" onClick={()=>{setQaCat(categories[0].name);setQaAmt("");setQaNote("");setModal({type:"quickAdd"});}}
+        <button className="fab" onClick={()=>{const def=lastCat&&categories.find(c=>c.name===lastCat)?lastCat:categories[0].name;setQaCat(def);setQaAmt("");setQaNote("");setModal({type:"quickAdd"});}}
           style={{position:"fixed",bottom:24,right:20,width:54,height:54,borderRadius:"50%",background:"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",color:"#fff",fontSize:28,fontWeight:300,zIndex:80,boxShadow:"0 4px 22px #7c3aed77",display:"flex",alignItems:"center",justifyContent:"center"}}>
           +
         </button>
@@ -808,6 +956,18 @@ export default function App(){
                   }} style={{flex:1,padding:"13px 0",background:"#10b98122",color:"#34d399",border:"1px solid #10b98133",borderRadius:11,fontWeight:700,fontSize:14}}>Merge</button>
                 </div>
                 <button onClick={()=>setModal(null)} style={{width:"100%",padding:"11px 0",background:"#141726",color:"#6b7299",border:"none",borderRadius:11,fontWeight:600,fontSize:14}}>Cancel</button>
+              </>
+            )}
+
+            {/* Confirm Delete Fixed Expense */}
+            {modal.type==="confirmDelete"&&(
+              <>
+                <div style={{fontWeight:700,fontSize:18,marginBottom:8}}>Delete Fixed Expense?</div>
+                <div style={{color:"#6b7299",fontSize:14,marginBottom:24}}>Remove <span style={{color:"#e2e4f0",fontWeight:600}}>{modal.name}</span> from your fixed expenses? This can't be undone.</div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>{persist(null,null,null,fixed.filter((_,j)=>j!==modal.idx));setModal(null);showToast("Removed ✓");}} style={{flex:1,padding:"13px 0",background:"#ef4444",color:"#fff",border:"none",borderRadius:11,fontWeight:700,fontSize:15}}>Delete</button>
+                  <button onClick={()=>setModal(null)} style={{flex:1,padding:"13px 0",background:"#141726",color:"#6b7299",border:"none",borderRadius:11,fontWeight:600,fontSize:15}}>Cancel</button>
+                </div>
               </>
             )}
 
