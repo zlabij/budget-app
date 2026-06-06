@@ -184,7 +184,8 @@ export default function App(){
   const allCatColors={};categories.forEach(c=>{allCatColors[c.name]=c.color;});
 
   return(
-    <div style={{minHeight:"100vh",background:"#07090f",color:"#e2e4f0",fontFamily:"'DM Sans',sans-serif",paddingBottom:90}}>
+    <div style={{minHeight:"100vh",background:"#07090f",color:"#e2e4f0",fontFamily:"'DM Sans',sans-serif",paddingBottom:"calc(90px + env(safe-area-inset-bottom))"}}>
+
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
         *{box-sizing:border-box;margin:0;padding:0}input,button{font-family:'DM Sans',sans-serif}button{cursor:pointer}
@@ -201,7 +202,7 @@ export default function App(){
       `}</style>
 
       {/* HEADER */}
-      <div style={{background:"#0c0e18",borderBottom:"1px solid #141726",padding:"16px 18px 0",position:"sticky",top:0,zIndex:50}}>
+      <div style={{background:"#0c0e18",borderBottom:"1px solid #141726",paddingTop:"calc(env(safe-area-inset-top) + 16px)",paddingLeft:18,paddingRight:18,paddingBottom:0,position:"sticky",top:0,zIndex:50}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
           <button onClick={()=>{let y=yr,m=mo-1;if(m<0){m=11;y--;}setYr(y);setMo(m);}} style={{background:"#141726",border:"none",color:"#9ca3c0",borderRadius:9,width:32,height:32,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>‹</button>
           <div style={{textAlign:"center"}}>
