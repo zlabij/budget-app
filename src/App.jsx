@@ -96,6 +96,9 @@ export default function App(){
 
   useEffect(()=>{
     let d=load(yr,mo);
+    // Always load global category templates so budgets carry to every month
+    const globalCats=loadX("global_cats")||[];
+    const globalFixed=loadX("global_fixed")||[];
     if(!d){
       const p=getPrev(yr,mo); const pd=load(p.year,p.month);
       let cats=[],prevInc=0,prevSavs=[],prevFixed=[],prevBalCarry=0;
@@ -113,9 +116,24 @@ export default function App(){
       d={categories:cats,income:prevInc,savings:prevSavs,fixedExpenses:prevFixed,balanceCarryover:prevBalCarry};
       save(yr,mo,d);
     }
-    const globalFixed=loadX("global_fixed")||[];
+    // If this month has empty categories but global ones exist, populate from global
+    let monthCats=d.categories||[];
+    if(monthCats.length===0&&globalCats.length>0){
+      monthCats=globalCats.map(c=>mkCat(c.name,c.emoji,c.color,c.budget));
+    } else if(monthCats.length>0&&globalCats.length>0){
+      // Merge: update budget amounts from global for categories that exist in both
+      // but keep this month's spent/transactions intact
+      monthCats=monthCats.map(c=>{
+        const g=globalCats.find(gc=>gc.name.toLowerCase()===c.name.toLowerCase());
+        return g?{...c,budget:g.budget,emoji:g.emoji,color:g.color}:c;
+      });
+      // Add any new categories from global that aren't in this month yet
+      const existing=new Set(monthCats.map(c=>c.name.toLowerCase()));
+      const toAdd=globalCats.filter(g=>!existing.has(g.name.toLowerCase())).map(g=>mkCat(g.name,g.emoji,g.color,g.budget));
+      monthCats=[...monthCats,...toAdd];
+    }
     const monthFixed=(d.fixedExpenses&&d.fixedExpenses.length>0)?d.fixedExpenses:globalFixed;
-    setCategories(d.categories||[]); setIncome(d.income||0); setSavings(d.savings||[]); setFixed(monthFixed); setBalCarry(d.balanceCarryover||0);
+    setCategories(monthCats); setIncome(d.income||0); setSavings(d.savings||[]); setFixed(monthFixed); setBalCarry(d.balanceCarryover||0);
     setIncomeInput((d.income||0).toString());
   },[yr,mo]);
 
@@ -125,6 +143,8 @@ export default function App(){
     const c=cats??categories,i=inc??income,s=savs??savings,f=fx??fixed;
     setCategories(c);setIncome(i);setSavings(s);setFixed(f);
     save(yr,mo,{categories:c,income:i,savings:s,fixedExpenses:f,balanceCarryover:balCarry});
+    // Save global templates so budgets carry to every month
+    if(cats!==null)saveX("global_cats",c.map(cat=>({name:cat.name,emoji:cat.emoji,color:cat.color,budget:cat.budget})));
     if(fx!==null)saveX("global_fixed",f);
   }
   function persistAccounts(a){setAccounts(a);saveX("nw_accounts",a);}
@@ -271,7 +291,7 @@ export default function App(){
                   <div style={{fontSize:9,color:"#4b5280",letterSpacing:1,textTransform:"uppercase",marginBottom:2}}>Monthly Income</div>
                   <div style={{fontFamily:"'Space Mono',monospace",fontSize:24,fontWeight:700,color:"#34d399"}}>${fmt(income)}</div>
                 </div>
-                <button onClick={()=>{setIncomeInput(income.toString());setModal({type:"income"});}} style={{background:"#1a1f3a",color:"#a78bfa",border:"1px solid #2a2d55",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:600}}>{income===0?"Set Income":"Edit"}</button>
+                <button onClick={()=>{setIncomeInput("");setModal({type:"income"});}} style={{background:"#1a1f3a",color:"#a78bfa",border:"1px solid #2a2d55",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:600}}>{income===0?"Set Income":"Edit"}</button>
               </div>
               {balCarry>0&&(
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#10b98110",border:"1px solid #10b98125",borderRadius:9,padding:"8px 12px"}}>
@@ -693,7 +713,7 @@ export default function App(){
                 <div key={cat.name} className="card" style={{background:"#0c0e18",border:"1px solid #141726",borderRadius:12,padding:"11px 14px",display:"flex",alignItems:"center",gap:10}}>
                   <div style={{width:32,height:32,borderRadius:8,background:cat.color+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,border:`1px solid ${cat.color}30`,flexShrink:0}}>{cat.emoji}</div>
                   <div style={{flex:1}}><div style={{fontWeight:600,fontSize:14}}>{cat.name}</div><div style={{fontSize:11,color:"#4b5280"}}>${fmt(cat.budget+cat.carryover)}/mo</div></div>
-                  <button onClick={()=>{setModal({type:"budget",cat});setEditBudgetVal(cat.budget.toString());}} style={{padding:"5px 10px",background:"#141726",color:"#9ca3c0",border:"none",borderRadius:7,fontSize:12}}>Edit</button>
+                  <button onClick={()=>{setModal({type:"budget",cat});setEditBudgetVal("");}} style={{padding:"5px 10px",background:"#141726",color:"#9ca3c0",border:"none",borderRadius:7,fontSize:12}}>Edit</button>
                   <button onClick={()=>persist(categories.filter(c=>c.name!==cat.name),null,null,null)} style={{padding:"5px 10px",background:"#141726",color:"#ef4444",border:"none",borderRadius:7,fontSize:12}}>✕</button>
                 </div>
               ))}
@@ -778,7 +798,7 @@ export default function App(){
       {/* MODALS */}
       {modal&&(
         <div onClick={()=>setModal(null)} style={{position:"fixed",inset:0,background:"#000000aa",zIndex:100,display:"flex",alignItems:"flex-end"}}>
-          <div className="sheet" onClick={e=>e.stopPropagation()} style={{background:"#0c0e18",borderRadius:"20px 20px 0 0",padding:"22px 20px",paddingBottom:"calc(28px + env(safe-area-inset-bottom))",width:"100%",border:"1px solid #1e2140",borderBottom:"none",maxHeight:"92vh",overflowY:"auto"}}>
+          <div className="sheet" onClick={e=>e.stopPropagation()} style={{background:"#0c0e18",borderRadius:"20px 20px 0 0",padding:"22px 20px",paddingBottom:"calc(28px + env(safe-area-inset-bottom))",width:"100%",border:"1px solid #1e2140",borderBottom:"none",maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
 
             {modal.type==="quickAdd"&&(
               <>
@@ -795,7 +815,7 @@ export default function App(){
                 </div>
                 <div style={{display:"flex",alignItems:"center",background:"#141726",borderRadius:12,padding:"12px 16px",marginBottom:10}}>
                   <span style={{fontSize:22,color:"#6b7299",marginRight:8}}>$</span>
-                  <input autoFocus value={qaAmt} onChange={e=>setQaAmt(e.target.value)} type="number" min="0" step="0.01" placeholder="0.00" style={{flex:1,background:"none",border:"none",color:"#e2e4f0",fontSize:28,fontFamily:"'Space Mono',monospace",outline:"none"}}/>
+                  <input autoFocus value={qaAmt} onChange={e=>setQaAmt(e.target.value.replace(/[^0-9.]/g,""))} inputMode="decimal" placeholder="0.00" style={{flex:1,background:"none",border:"none",color:"#e2e4f0",fontSize:28,fontFamily:"'Space Mono',monospace",outline:"none"}}/>
                 </div>
                 <input value={qaNote} onChange={e=>setQaNote(e.target.value)} placeholder="Note (optional)" style={{width:"100%",background:"#141726",border:"1px solid #252840",borderRadius:10,padding:"10px 14px",color:"#e2e4f0",fontSize:14,marginBottom:14,outline:"none"}}/>
                 <button onClick={()=>{const amt=parseFloat(qaAmt);if(!amt||!qaCat)return;logSpend(qaCat,amt,qaNote);setModal(null);}} style={{width:"100%",padding:"14px 0",background:"#7c3aed",color:"#fff",border:"none",borderRadius:12,fontWeight:700,fontSize:16}}>Log Spend</button>
@@ -811,7 +831,7 @@ export default function App(){
                 <div style={{color:"#6b7299",fontSize:13,marginBottom:18}}>${fmt((modal.cat.budget+modal.cat.carryover)-modal.cat.spent)} remaining</div>
                 <div style={{display:"flex",alignItems:"center",background:"#141726",borderRadius:12,padding:"12px 16px",marginBottom:10}}>
                   <span style={{fontSize:22,color:"#6b7299",marginRight:8}}>$</span>
-                  <input autoFocus value={spendAmt} onChange={e=>setSpendAmt(e.target.value)} type="number" min="0" step="0.01" style={{flex:1,background:"none",border:"none",color:"#e2e4f0",fontSize:28,fontFamily:"'Space Mono',monospace",outline:"none"}}/>
+                  <input autoFocus value={spendAmt} onChange={e=>setSpendAmt(e.target.value.replace(/[^0-9.]/g,""))} inputMode="decimal" placeholder="0.00" style={{flex:1,background:"none",border:"none",color:"#e2e4f0",fontSize:28,fontFamily:"'Space Mono',monospace",outline:"none"}}/>
                 </div>
                 <input value={spendNote} onChange={e=>setSpendNote(e.target.value)} placeholder="Note (optional)" style={{width:"100%",background:"#141726",border:"1px solid #252840",borderRadius:10,padding:"10px 14px",color:"#e2e4f0",fontSize:14,marginBottom:14,outline:"none"}}/>
                 <button onClick={()=>{const amt=parseFloat(spendAmt);if(!amt||amt<=0)return;logSpend(modal.cat.name,amt,spendNote);setSpendAmt("");setSpendNote("");setModal(null);}} style={{width:"100%",padding:"14px 0",background:modal.cat.color,color:"#fff",border:"none",borderRadius:12,fontWeight:700,fontSize:16}}>Log Spend</button>
@@ -826,7 +846,7 @@ export default function App(){
                 </div>
                 <div style={{display:"flex",alignItems:"center",background:"#141726",borderRadius:12,padding:"12px 16px",marginBottom:14}}>
                   <span style={{fontSize:22,color:"#6b7299",marginRight:8}}>$</span>
-                  <input autoFocus value={editBudgetVal} onChange={e=>setEditBudgetVal(e.target.value)} type="number" min="0" style={{flex:1,background:"none",border:"none",color:"#e2e4f0",fontSize:28,fontFamily:"'Space Mono',monospace",outline:"none"}}/>
+                  <input autoFocus value={editBudgetVal} onChange={e=>setEditBudgetVal(e.target.value.replace(/[^0-9.]/g,""))} inputMode="decimal" placeholder="0.00" style={{flex:1,background:"none",border:"none",color:"#e2e4f0",fontSize:28,fontFamily:"'Space Mono',monospace",outline:"none"}}/>
                 </div>
                 <button onClick={()=>{const amt=parseFloat(editBudgetVal);if(isNaN(amt))return;persist(categories.map(c=>c.name===modal.cat.name?{...c,budget:+amt.toFixed(2)}:c),null,null,null);setModal(null);showToast("Budget updated ✓");}} style={{width:"100%",padding:"14px 0",background:"#7c3aed",color:"#fff",border:"none",borderRadius:12,fontWeight:700,fontSize:16}}>Save Budget</button>
               </>
@@ -838,9 +858,9 @@ export default function App(){
                 <div style={{color:"#6b7299",fontSize:13,marginBottom:18}}>Your take-home pay per month</div>
                 <div style={{display:"flex",alignItems:"center",background:"#141726",borderRadius:12,padding:"12px 16px",marginBottom:16}}>
                   <span style={{fontSize:22,color:"#6b7299",marginRight:8}}>$</span>
-                  <input autoFocus value={incomeInput} onChange={e=>setIncomeInput(e.target.value)} type="number" min="0" style={{flex:1,background:"none",border:"none",color:"#e2e4f0",fontSize:28,fontFamily:"'Space Mono',monospace",outline:"none"}}/>
+                  <input autoFocus value={incomeInput} onChange={e=>setIncomeInput(e.target.value.replace(/[^0-9.]/g,""))} inputMode="decimal" placeholder="0.00" style={{flex:1,background:"none",border:"none",color:"#e2e4f0",fontSize:28,fontFamily:"'Space Mono',monospace",outline:"none"}}/>
                 </div>
-                <button onClick={()=>{const v=parseFloat(incomeInput);if(isNaN(v))return;persist(null,+v.toFixed(2),null,null);setModal(null);showToast("Income saved ✓");}} style={{width:"100%",padding:"14px 0",background:"#059669",color:"#fff",border:"none",borderRadius:12,fontWeight:700,fontSize:16}}>Save Income</button>
+                <button onClick={()=>{const v=parseFloat(incomeInput);if(isNaN(v)||v<=0)return;persist(null,+v.toFixed(2),null,null);setModal(null);showToast("Income saved ✓");}} style={{width:"100%",padding:"14px 0",background:"#059669",color:"#fff",border:"none",borderRadius:12,fontWeight:700,fontSize:16}}>Save Income</button>
               </>
             )}
 
@@ -853,7 +873,7 @@ export default function App(){
                 <div style={{color:"#6b7299",fontSize:13,marginBottom:18}}>All-time saved: ${fmt((modal.sv.totalDeposited||0)+modal.sv.deposited)}</div>
                 <div style={{display:"flex",alignItems:"center",background:"#141726",borderRadius:12,padding:"12px 16px",marginBottom:14}}>
                   <span style={{fontSize:22,color:"#6b7299",marginRight:8}}>$</span>
-                  <input autoFocus value={depAmt} onChange={e=>setDepAmt(e.target.value)} type="number" min="0" step="0.01" style={{flex:1,background:"none",border:"none",color:"#e2e4f0",fontSize:28,fontFamily:"'Space Mono',monospace",outline:"none"}}/>
+                  <input autoFocus value={depAmt} onChange={e=>setDepAmt(e.target.value.replace(/[^0-9.]/g,""))} inputMode="decimal" placeholder="0.00" style={{flex:1,background:"none",border:"none",color:"#e2e4f0",fontSize:28,fontFamily:"'Space Mono',monospace",outline:"none"}}/>
                 </div>
                 <button onClick={()=>{const amt=parseFloat(depAmt);if(!amt||amt<=0)return;const u=savings.map((s,i)=>i!==modal.svIdx?s:{...s,deposited:+(s.deposited+amt).toFixed(2),transactions:[{amount:amt,date:new Date().toLocaleDateString()},...(s.transactions||[])]});persist(null,null,u,null);setDepAmt("");setModal(null);showToast(`$${fmt(amt)} deposited ✓`);}} style={{width:"100%",padding:"14px 0",background:"#1d4ed8",color:"#fff",border:"none",borderRadius:12,fontWeight:700,fontSize:16}}>Deposit</button>
               </>
